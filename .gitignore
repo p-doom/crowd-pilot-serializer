@@ -1,0 +1,31 @@
+# Rust
+/target/
+Cargo.lock
+
+# Node.js
+node_modules/
+*.node
+*.js
+*.d.ts
+package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
