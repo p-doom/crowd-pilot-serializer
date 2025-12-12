@@ -1,0 +1,40 @@
+{
+  "name": "@crowd-pilot/serializer",
+  "version": "0.1.0",
+  "description": "Node.js bindings for crowd-pilot serializer",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "serializer",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "universal": "napi universal",
+    "version": "napi version"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p-doom/crowd-pilot-serializer"
+  }
+}
+
