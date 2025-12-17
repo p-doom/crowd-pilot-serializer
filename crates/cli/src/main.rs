@@ -1,14 +1,13 @@
 //! CLI tool for serializing crowd-pilot IDE interaction data.
 //!
 //! This tool processes CSV session files and outputs JSONL format suitable for
-//! NeMo SFT training. It uses an embedded Python interpreter to load HuggingFace
-//! tokenizers for accurate token counting.
+//! NeMo SFT training. It uses the HuggingFace tokenizers Rust library for
+//! accurate token counting.
 
 use std::path::PathBuf;
 
 use clap::Parser;
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use tokenizers::Tokenizer as HfTokenizer;
 
 use crowd_pilot_serializer_core::{
     pipeline::{PipelineConfig, PipelineResult},
@@ -74,53 +73,46 @@ your_command_here
 
 Failure to follow these rules will cause your response to be rejected."#;
 
-/// Wrapper around Python tokenizer for exact token counting and truncation.
-struct PythonTokenizer {
-    tokenizer: Py<PyAny>,
+/// Wrapper around HuggingFace tokenizers for token counting and truncation.
+///
+/// This uses the Rust-native tokenizers library, which is `Send + Sync`
+/// and enables true parallel tokenization without the Python GIL.
+struct RustTokenizer {
+    inner: HfTokenizer,
 }
 
-impl PythonTokenizer {
-    /// Load a HuggingFace tokenizer.
-    fn load(model_name: &str) -> PyResult<Self> {
-        Python::with_gil(|py| {
-            let transformers = PyModule::import(py, "transformers")?;
-            let auto_tokenizer = transformers.getattr("AutoTokenizer")?;
-            let tokenizer = auto_tokenizer.call_method1("from_pretrained", (model_name,))?;
-            Ok(Self {
-                tokenizer: tokenizer.into(),
-            })
-        })
+impl RustTokenizer {
+    /// Load a HuggingFace tokenizer from a model name or path.
+    fn load(model_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let inner = HfTokenizer::from_pretrained(model_name, None)
+            .map_err(|e| e as Box<dyn std::error::Error>)?;
+        Ok(Self { inner })
     }
 }
 
-impl Tokenizer for PythonTokenizer {
+impl Tokenizer for RustTokenizer {
     fn count_tokens(&self, text: &str) -> usize {
-        Python::with_gil(|py| {
-            let tokenizer = self.tokenizer.as_ref(py);
-            let tokens = tokenizer
-                .call_method1("encode", (text,))
-                .expect("Failed to encode text with tokenizer");
-            tokens.len().unwrap()
-        })
+        self.inner
+            .encode(text, false)
+            .expect("Failed to encode text with tokenizer")
+            .get_ids()
+            .len()
     }
 
     fn truncate_to_max_tokens(&self, text: &str, max_tokens: usize) -> String {
-        Python::with_gil(|py| {
-            let tokenizer = self.tokenizer.as_ref(py);
-            let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("max_length", max_tokens).unwrap();
-            kwargs.set_item("truncation", true).unwrap();
-            
-            let tokens = tokenizer
-                .call_method("encode", (text,), Some(kwargs))
-                .expect("Failed to encode text with tokenizer");
-            
-            tokenizer
-                .call_method1("decode", (tokens,))
-                .expect("Failed to decode tokens")
-                .extract()
-                .unwrap()
-        })
+        let encoding = self.inner
+            .encode(text, false)
+            .expect("Failed to encode text with tokenizer");
+        
+        let ids = encoding.get_ids();
+        if ids.len() <= max_tokens {
+            return text.to_string();
+        }
+        
+        let truncated_ids: Vec<u32> = ids[..max_tokens].to_vec();
+        self.inner
+            .decode(&truncated_ids, true)
+            .expect("Failed to decode truncated tokens")
     }
 }
 
@@ -128,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     println!("Loading tokenizer from {}...", args.tokenizer);
-    let tokenizer = PythonTokenizer::load(&args.tokenizer)?;
+    let tokenizer = RustTokenizer::load(&args.tokenizer)?;
 
     let config = PipelineConfig {
         max_tokens_per_conversation: args.max_tokens_per_conversation,
@@ -210,4 +202,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

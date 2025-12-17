@@ -1,7 +1,9 @@
 //! Pipeline for processing CSV sessions into conversations.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
@@ -167,35 +169,56 @@ where
     Ok(manager.get_conversations())
 }
 
-/// Process all CSV sessions in a directory.
+/// Process all CSV sessions in a directory in parallel.
+///
+/// Uses rayon for parallel processing. The tokenizer must be `Sync + Send`
+/// to be shared across threads.
 pub fn process_all_sessions<T>(
     csv_root: &Path,
     tokenizer: &T,
     config: &PipelineConfig,
 ) -> Result<Vec<SessionResult>, Box<dyn std::error::Error>>
 where
-    T: Tokenizer,
+    T: Tokenizer + Sync + Send,
 {
     let csv_files = discover_csv_files(csv_root);
-    
+
     if csv_files.is_empty() {
         return Err(format!("No CSV files found under {:?}", csv_root).into());
     }
 
-    let mut results = Vec::new();
-    
-    for csv_path in csv_files {
-        match process_session(&csv_path, tokenizer, config) {
-            Ok(conversations) => {
-                results.push(SessionResult {
-                    conversations,
-                    source_path: csv_path.to_string_lossy().to_string(),
-                });
+    let total_files = csv_files.len();
+    let processed_count = AtomicUsize::new(0);
+    let error_count = AtomicUsize::new(0);
+
+    let results: Vec<SessionResult> = csv_files
+        .into_par_iter()
+        .filter_map(|csv_path| {
+            let result = process_session(&csv_path, tokenizer, config);
+            let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+            match result {
+                Ok(conversations) => {
+                    if count % 100 == 0 || count == total_files {
+                        eprintln!("Processed {}/{} sessions...", count, total_files);
+                    }
+                    Some(SessionResult {
+                        conversations,
+                        source_path: csv_path.to_string_lossy().to_string(),
+                    })
+                }
+                Err(e) => {
+                    error_count.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("Error processing {:?}: {}", csv_path, e);
+                    None
+                }
             }
-            Err(e) => {
-                eprintln!("Error processing {:?}: {}", csv_path, e);
-            }
-        }
+        })
+        .collect();
+
+    let errors = error_count.load(Ordering::Relaxed);
+    if errors > 0 {
+        eprintln!("Warning: {} sessions failed to process", errors);
     }
 
     Ok(results)
