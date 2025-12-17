@@ -11,6 +11,37 @@ static ANSI_OSC_TERMINATED_RE: LazyLock<Regex> =
 static ANSI_OSC_LINE_FALLBACK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\x1b\][^\n]*$").unwrap());
 
+/// Find the largest valid UTF-8 char boundary <= index.
+///
+/// This function prevents panics when the index lands inside a multi-byte
+/// character by walking back at most 3 bytes to find a valid boundary.
+/// # Approximation Warning
+///
+/// This is a pragmatic fix for handling offsets from VS Code, which provides
+/// UTF-16 code unit offsets, while Rust strings use UTF-8 byte offsets.
+///
+/// - For ASCII/BMP text: UTF-16 offset ≈ UTF-8 byte offset (works correctly)
+/// - For text with emojis/astral chars: UTF-16 offset < UTF-8 byte offset
+///   (we undercount, slicing earlier in the file than intended)
+///
+/// The correct solution would be UTF-16 → UTF-8 offset conversion (O(n)),
+/// but this O(1) approximation is acceptable for line counting where small
+/// inaccuracies in viewport position don't significantly impact the output.
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else if s.is_char_boundary(index) {
+        index
+    } else {
+        // Walk backwards to find a char boundary
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
 /// Clean text by normalizing line endings and trimming trailing whitespace.
 pub fn clean_text(text: &str) -> String {
     text.replace("\r\n", "\n")

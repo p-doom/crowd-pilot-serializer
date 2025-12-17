@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::diff::compute_changed_block_lines;
 use crate::helpers::{
-    clean_text, escape_single_quotes_for_sed, fenced_block, line_numbered_output,
-    normalize_terminal_output, serialize_compute_viewport, Viewport,
+    clean_text, escape_single_quotes_for_sed, fenced_block, floor_char_boundary,
+    line_numbered_output, normalize_terminal_output, serialize_compute_viewport, Viewport,
 };
 use crate::Tokenizer;
 use crate::{COALESCE_RADIUS, MAX_TOKENS_PER_MESSAGE, MAX_TOKENS_PER_TERMINAL_OUTPUT, VIEWPORT_RADIUS};
@@ -407,8 +407,10 @@ where
         let new_text_str = new_text;
 
         // Approximate current edit region in line space
-        let start_line_current = before[..offset.min(before.len())].matches('\n').count() + 1;
-        let deleted_content = &before[offset.min(before.len())..(offset + length).min(before.len())];
+        let safe_offset = floor_char_boundary(&before, offset.min(before.len()));
+        let safe_end = floor_char_boundary(&before, (offset + length).min(before.len()));
+        let start_line_current = before[..safe_offset].matches('\n').count() + 1;
+        let deleted_content = &before[safe_offset..safe_end];
         let lines_added = new_text_str.matches('\n').count();
         let lines_deleted = deleted_content.matches('\n').count();
         let region_start = start_line_current;
@@ -461,7 +463,8 @@ where
 
         let content = self.file_states.get(file_path).cloned().unwrap_or_default();
         let total_lines = content.split('\n').count();
-        let target_line = content[..offset.min(content.len())].matches('\n').count() + 1;
+        let safe_offset = floor_char_boundary(&content, offset.min(content.len()));
+        let target_line = content[..safe_offset].matches('\n').count() + 1;
 
         let current_vp = self.per_file_viewport.get(file_path).and_then(|v| *v);
         let mut should_emit = false;
