@@ -5,6 +5,7 @@
 //! tokenizers for accurate token counting.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use pyo3::prelude::*;
@@ -124,11 +125,42 @@ impl Tokenizer for PythonTokenizer {
     }
 }
 
+/// Thread-safe wrapper around PythonTokenizer.
+///
+/// Uses a Mutex to ensure only one thread accesses the Python tokenizer at a time.
+/// This is necessary because `Py<PyAny>` is `Send` but not `Sync`.
+/// 
+/// Note: Python's GIL already serializes access, so this doesn't add overhead.
+struct ThreadSafeTokenizer {
+    inner: Mutex<PythonTokenizer>,
+}
+
+impl ThreadSafeTokenizer {
+    fn new(tokenizer: PythonTokenizer) -> Self {
+        Self {
+            inner: Mutex::new(tokenizer),
+        }
+    }
+}
+
+impl Tokenizer for ThreadSafeTokenizer {
+    fn count_tokens(&self, text: &str) -> usize {
+        let tokenizer = self.inner.lock().expect("Tokenizer mutex poisoned");
+        tokenizer.count_tokens(text)
+    }
+
+    fn truncate_to_max_tokens(&self, text: &str, max_tokens: usize) -> String {
+        let tokenizer = self.inner.lock().expect("Tokenizer mutex poisoned");
+        tokenizer.truncate_to_max_tokens(text, max_tokens)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     println!("Loading tokenizer from {}...", args.tokenizer);
     let tokenizer = PythonTokenizer::load(&args.tokenizer)?;
+    let tokenizer = Arc::new(ThreadSafeTokenizer::new(tokenizer));
 
     let config = PipelineConfig {
         max_tokens_per_conversation: args.max_tokens_per_conversation,
@@ -142,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Processing CSV files from {:?}...", args.csv_root);
     let session_results = process_all_sessions(
         &args.csv_root,
-        &tokenizer,
+        tokenizer.as_ref(),
         &config,
     )?;
 
