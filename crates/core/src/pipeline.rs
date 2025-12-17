@@ -127,7 +127,7 @@ where
             "content" => {
                 let offset = row.range_offset.expect("content event missing RangeOffset") as usize;
                 let length = row.range_length.expect("content event missing RangeLength") as usize;
-                let text = row.text.as_deref().expect("content event missing Text");
+                let text = row.text.as_deref().unwrap_or("");
                 manager.handle_content_event(&row.file, offset, length, text);
             }
             "selection_command" | "selection_mouse" | "selection_keyboard" => {
@@ -135,18 +135,27 @@ where
                 manager.handle_selection_event(&row.file, offset);
             }
             "terminal_command" => {
-                let command = row.text.as_deref().expect("terminal_command event missing Text");
+                let command = row.text.as_deref().unwrap_or_else(|| {
+                    eprintln!("Warning: terminal_command event missing Text in {:?}", csv_path);
+                    ""
+                });
                 manager.handle_terminal_command_event(command);
             }
             "terminal_output" => {
-                let output = row.text.as_deref().expect("terminal_output event missing Text");
+                let output = row.text.as_deref().unwrap_or_else(|| {
+                    eprintln!("Warning: terminal_output event missing Text in {:?}", csv_path);
+                    ""
+                });
                 manager.handle_terminal_output_event(output);
             }
             "terminal_focus" => {
                 manager.handle_terminal_focus_event();
             }
             "git_branch_checkout" => {
-                let branch_info = row.text.as_deref().expect("git_branch_checkout event missing Text");
+                let branch_info = row.text.as_deref().unwrap_or_else(|| {
+                    eprintln!("Warning: git_branch_checkout event missing Text in {:?}", csv_path);
+                    ""
+                });
                 manager.handle_git_branch_checkout_event(branch_info);
             }
             other => {
